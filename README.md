@@ -1,6 +1,6 @@
 # iperturb
 
-iPerutrb使用变分自动编码器实现了人群规模单细胞数据的多条件整合。可参考pipy：https://pypi.org/project/iperturb/
+iPerutrb使用变分自动编码器实现了人群规模单细胞数据的多条件整合。软胶包的信息参考pipy：https://pypi.org/project/iperturb/；样例信息可以参考:
 
 ## 安装
 
