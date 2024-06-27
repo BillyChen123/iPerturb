@@ -17,7 +17,7 @@ After installation, you can use functions and classes from the iPerturb package 
 For example:
 
 ```python
-import iPerturb.iperturb as iPerturb
+import iperturb as iPerturb
 import torch
 import scanpy as sc
 
