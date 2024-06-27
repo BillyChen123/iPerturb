@@ -1,8 +1,8 @@
-#!/home/chenyz/anaconda3/envs/MOBA_Billy/bin/python
-
 # setup environment
 import os
-smoke_test = ('CI' in os.environ)  # for continuous integration tests
+
+from . import preprocess
+
 
 # various import statements
 import torch
@@ -16,7 +16,7 @@ import pyro.poutine as poutine
 from pyro.distributions.util import broadcast_shape
 from pyro.optim import MultiStepLR
 from pyro.infer import SVI, config_enumerate, TraceEnum_ELBO, RenyiELBO
-
+from torch.utils.data import DataLoader
 import numpy as np
 
 import time
@@ -301,7 +301,10 @@ class iPerturb_model_init(nn.Module):
 
     
 # 用来记录pyro模型迭代的重要参数，并进行模型初始化
-def model_init_(num_genes, num_batch, scale_factor, latent_dim1, latent_dim2, latent_dim3, optimizer, lr, gamma, milestones, set_seed=123, cuda = False, alpha=0):
+def model_init_(hyper, latent_dim1, latent_dim2, latent_dim3, optimizer, lr, gamma, milestones, set_seed=123, cuda = False, alpha=0):
+    num_genes = hyper['num_genes']
+    num_batch = hyper['num_batch']
+    scale_factor = 1.0 / (hyper['batch_size'] * hyper['num_genes'])
     # Clear Pyro param store so we don't conflict with previous
     # # training runs in this session
     # pyro.clear_param_store()
@@ -358,37 +361,63 @@ def RUN_model(epochs,svi,scheduler,dataloader):
     print(f"Finished training! Time:{execution_time}.")
 
 # 总的RUN
-def RUN(iPerturb_model,svi,scheduler,epochs,dataloader,dataloader2,hyper,raw):
+def RUN(datasets,iPerturb_model,svi,scheduler,epochs,hyper,raw,cuda,batch_size=100,if_likelihood=False):
+    sc_datasets = preprocess.scDataset(datasets,cuda=cuda,transform=preprocess.transform_numpy)
+    batch_sampler = preprocess.BatchSampler(datasets,batch_size=batch_size,cuda=cuda)
+
+    dataloader = DataLoader(sc_datasets, batch_sampler=batch_sampler)
+    dataloader2 = DataLoader(sc_datasets, batch_size=batch_size, shuffle=True)
+
     # training runs in this session
     RUN_model(epochs,svi,scheduler,dataloader)
     # Put the neural networks in evaluation mode (needed because of batch norm)
     iPerturb_model.eval()
-    # z
-    z_pred = iPerturb_model.z_encoder(hyper['x'].cuda())[0]
+    if cuda:
+        # z
+        z_pred = iPerturb_model.z_encoder(hyper['x'].cuda())[0]
+    else:
+        # z
+        z_pred = iPerturb_model.z_encoder(hyper['x'])[0]
     # 重构
     x_pred = iPerturb_model.x_decoder(z_pred)[0]
+    z_s = iPerturb_model.ts_encoder(z_pred)[0]
+    t_logit = iPerturb_model.zs_encoder(z_s)
+    z_t = iPerturb_model.zs2_encoder(z_s, t_logit)[0]
+
+
     x_pred = x_pred.data.cpu().numpy()
-    z_pred = z_pred.data.cpu().numpy()       
+    z_pred = z_pred.data.cpu().numpy()
+    zs_pred = z_s.data.cpu().numpy()
+    zt_pred = z_t.data.cpu().numpy()
+     
 
-    likelihood
-    RUN_model(epochs,svi,scheduler,dataloader2)
-    iPerturb_model.eval()
-
-    z_pred_ = iPerturb_model.z_encoder(hyper['x'].cuda())[0]
-    zs_pred = iPerturb_model.ts_encoder(z_pred_)[0]
-    t_logits = iPerturb_model.zs_encoder(zs_pred)
-    t_logits = softmax(t_logits,dim=-1).data.cpu().numpy()
-    likelihood = np.argmax(t_logits, axis=-1)
+    # likelihood
+    if if_likelihood:
+        RUN_model(epochs,svi,scheduler,dataloader2)
+        iPerturb_model.eval()
+        if cuda:
+            # z
+            z_pred_ = iPerturb_model.z_encoder(hyper['x'].cuda())[0]
+        else:
+            # z
+            z_pred_ = iPerturb_model.z_encoder(hyper['x'])[0]
+        zs_pred_ = iPerturb_model.ts_encoder(z_pred_)[0]
+        t_logits = iPerturb_model.zs_encoder(zs_pred_)
+        t_logits = softmax(t_logits,dim=-1).data.cpu().numpy()
+        likelihood = np.argmax(t_logits, axis=-1)
 
 
     # 创建 AnnData 对象
     datasets = utils.construct_anndata(data = x_pred, columns_names = hyper['var_names'], index_names = hyper['index_names'], raw=raw)  
         
     datasets.obsm['x_emb'] = z_pred
-    datasets.obsm['t_logits'] = t_logits
+    datasets.obsm['zt_emb'] = zt_pred
+    datasets.obsm['zs_emb'] = zs_pred
 
-    datasets.obs['likelihood'] = likelihood
-    datasets.obs['t_logits'] = datasets.obsm['t_logits'][:,0]
+    if if_likelihood:
+        datasets.obsm['t_logits'] = t_logits
+        datasets.obs['likelihood'] = likelihood
+        datasets.obs['t_logits'] = datasets.obsm['t_logits'][:,0]
 
     # ari_max,index_i = utils.Find_ari(datasets)
     # print(f'第一层重构已完成,它的ari是{ari_max},它的resolution是{index_i}.')

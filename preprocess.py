@@ -1,5 +1,3 @@
-#!/home/chenyz/anaconda3/envs/MOBA_Billy/bin/python
-
 # setup environment
 import os
 smoke_test = ('CI' in os.environ)  # for continuous integration tests
@@ -17,7 +15,7 @@ from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import Dataset,DataLoader,Sampler
 from scipy.sparse import csr_matrix
 
-def data_load(anndata, n_top_genes, batch_key = 'batch_2', condition_key = 'batch', groundtruth_key = 'groundtruth'):
+def data_load(anndata, n_top_genes, batch_key = 'batch_2', condition_key = 'batch', groundtruth_key = None):
     ######### 该代码用于预处理scanpy的原始数据，将单细胞测序数据进行清洗和质控，并且normalized它们 ##########
     datasets = anndata.copy()
     if isinstance(datasets.X, csr_matrix):
@@ -29,7 +27,8 @@ def data_load(anndata, n_top_genes, batch_key = 'batch_2', condition_key = 'batc
 
     datasets.obs['batch'] = datasets.obs[condition_key].astype('category')
     datasets.obs['batch_2'] = datasets.obs[batch_key].astype('category')
-    datasets.obs['groundtruth'] = datasets.obs[groundtruth_key].astype('category')
+    if groundtruth_key is not None:
+        datasets.obs['groundtruth'] = datasets.obs[groundtruth_key].astype('category')
     datasets.layers['counts'] = datasets.X.copy()
     # 数据筛选
     sc.pp.filter_cells(datasets, min_genes=200)
@@ -41,7 +40,7 @@ def data_load(anndata, n_top_genes, batch_key = 'batch_2', condition_key = 'batc
     sc.pp.log1p(datasets)
     datasets.layers['lognorm'] = datasets.X.copy()
     # 识别高变基因
-    sc.pp.highly_variable_genes(datasets,flavor='seurat_v3', batch_key= None, n_top_genes=n_top_genes)
+    sc.pp.highly_variable_genes(datasets, batch_key= None, n_top_genes=n_top_genes)
     # 将高变基因存在var中
     datasets.raw = datasets
     # 保留高变基因
@@ -207,7 +206,7 @@ def data_load(anndata, n_top_genes, batch_key = 'batch_2', condition_key = 'batc
 #                 # unlabeled
 #                 yield self.data_x[_slice[0]], None
 
-def transform_numpy(data, cuda = True):
+def transform_numpy(data, cuda):
     if cuda==True:
         data = torch.Tensor(data).cuda()
     else:
@@ -253,8 +252,12 @@ def shuffer(adata):
 #         return np.sum(self.num_class_batches)
 
 class BatchSampler(Sampler):
-    def __init__(self, adata, batch_size, label_encoder = LabelEncoder()):
-        self.labels = torch.tensor(label_encoder.fit_transform(adata.obs['batch'])).cuda()
+    def __init__(self, adata, batch_size, cuda, label_encoder = LabelEncoder()):
+        self.cuda = cuda
+        if cuda:
+            self.labels = torch.tensor(label_encoder.fit_transform(adata.obs['batch'])).cuda()
+        else:
+            self.labels = torch.tensor(label_encoder.fit_transform(adata.obs['batch'])).cpu()
         self.batch_size = batch_size
         self.num_labels = torch.unique(self.labels)
         self.indices = {}  # Precompute indices
@@ -282,12 +285,13 @@ class BatchSampler(Sampler):
 
 
 class scDataset(Dataset):
-    def __init__(self, adata, transform=None):
+    def __init__(self, adata, cuda, transform=None):
         super().__init__()
         self.batch_label = pd.get_dummies(adata.obs['batch_2']).values
         self.condition_label = pd.get_dummies(adata.obs['batch']).values
         self.expr = adata.X # 注意需不需要toarray()
         self.transform = transform
+        self.cuda = cuda
 
     def __len__(self):
         return len(self.batch_label)
@@ -296,8 +300,9 @@ class scDataset(Dataset):
         expr = self.expr[index,:]
         batch_label = self.batch_label[index,:]
         condition_label = self.condition_label[index,:]
+        ifcuda = self.cuda
         if self.transform:
-            expr = transform_numpy(expr)
-            batch_label = transform_numpy(batch_label)
-            condition_label = transform_numpy(condition_label)
+            expr = transform_numpy(expr,ifcuda)
+            batch_label = transform_numpy(batch_label,ifcuda)
+            condition_label = transform_numpy(condition_label,ifcuda)
         return expr,condition_label,batch_label

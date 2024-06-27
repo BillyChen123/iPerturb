@@ -1,4 +1,4 @@
-#!/home/chenyz/anaconda3/envs/MOBA_Billy/bin/python
-from . import model, utils, preprocess
+from . import model, preprocess
+from . import utils
 
-__version__ = "0.1.0"
+__version__ = "0.2.2"

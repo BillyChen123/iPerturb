@@ -1,12 +1,10 @@
-#!/home/chenyz/anaconda3/envs/MOBA_Billy/bin/python
-
 # setup environment
 import os
 smoke_test = ('CI' in os.environ)  # for continuous integration tests
 
 import torch
 import scanpy as sc
-from scib import me
+# from scib import me
 import pandas as pd
 import numpy as np
 import anndata as ad
@@ -45,17 +43,17 @@ def hyper_param(x, x_list, batch_labels):
 
     return num_genes, num_batch, x_list_mean, x_list_scale
 
-def Find_ari(datasets):
-    ########### 这个函数用于寻找模型的最优聚类 ########### 
-    ari_max = -1
-    index_i = 0
-    for i in range(0,30):
-        sc.tl.louvain(datasets,resolution=i*0.01,key_added='seurat_clusters')
-        ari = me.ari(datasets,'groundtruth','seurat_clusters')
-        if ari>ari_max:
-            ari_max = ari
-            index_i = i
-    return ari_max,index_i
+# def Find_ari(datasets):
+#     ########### 这个函数用于寻找模型的最优聚类 ########### 
+#     ari_max = -1
+#     index_i = 0
+#     for i in range(0,30):
+#         sc.tl.louvain(datasets,resolution=i*0.01,key_added='seurat_clusters')
+#         ari = me.ari(datasets,'groundtruth','seurat_clusters')
+#         if ari>ari_max:
+#             ari_max = ari
+#             index_i = i
+#     return ari_max,index_i
 
 
 def construct_anndata(data,columns_names,index_names,raw):
@@ -79,6 +77,23 @@ def construct_anndata(data,columns_names,index_names,raw):
     
     return datasets
 
+def create_hyper(datasets,var_names,index_names,batch_size=100):
+    x, x_list, batch, batch_labels, one_hot = process_batch_X(datasets)
+    num_genes, num_batch, x_list_mean, x_list_scale = hyper_param(x, x_list, batch_labels)
+    num_genes = x.shape[1]
+    batch_size = batch_size
+    hyper = {'num_genes': num_genes,
+    'num_batch':num_batch,
+    'batch_size':batch_size,
+    'batch_labels':batch_labels,
+    'one_hot':one_hot,
+    'x':x,
+    'x_list':x_list,
+    'batch':batch,
+    'var_names':var_names,
+    'index_names':index_names
+    }
+    return hyper
 
 
 def fit_knn(mat_train, mat_holdout, n_neighbors, algorithm = 'kd_tree'):
